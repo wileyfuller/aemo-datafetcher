@@ -28,13 +28,17 @@ import java.text.SimpleDateFormat;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.Date;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 import java.util.zip.ZipInputStream;
 
 import static java.util.stream.Collectors.toList;
+import static java.util.stream.Collectors.toMap;
 
 /**
  * Created by wiley on 29/04/2016.
@@ -152,18 +156,40 @@ public class Fetcher {
             final Document document = Jsoup.parse(responseBody);
 
             Elements elements = document.select("a");
+            
+
+            Pattern p = Pattern.compile(".+PUBLIC_ACTUAL_OPERATIONAL_DEMAND_HH_(\\d+)_.+");
+            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyyMMddHHmm");
+
+            List<LocalDate> localDates = loadCompletedDates(connection);
+            Map<String, LocalDate> dateMap = new HashMap<>();
+            for (LocalDate localDate : localDates) {
+                dateMap.put(localDate.format(DateTimeFormatter.BASIC_ISO_DATE), localDate);
+            }
 
 
             List<String> filteredPaths = elements.stream()
-                    .filter(el -> el.attr("href").contains("PUBLIC_ACTUAL"))
+                    .filter(el -> {
+                        String href = el.attr("href");
+                        if (href.contains("PUBLIC_ACTUAL")) {
+                            Matcher m = p.matcher(href);
+                            if (!m.matches()) {
+                                return true;
+                            }
+                            String dateStr = m.group(1);
+                            LocalDate date = LocalDate.parse(dateStr, formatter);
+                            return !dateMap.containsKey(date.format(DateTimeFormatter.BASIC_ISO_DATE));
+                        }
+                        return false;
+                    })
                     .map(el -> {
                         return el.attr("href");
                     })
 //                    .limit(10)
                     .collect(toList());
 
-            for (String p : filteredPaths) {
-                System.out.println(p);
+            for (String path : filteredPaths) {
+                System.out.println(path);
             }
 
 
@@ -176,7 +202,6 @@ public class Fetcher {
                                 } catch (IOException e) {
                                     e.printStackTrace();
                                 }
-
 
                                 return data;
                             }
@@ -297,8 +322,11 @@ public class Fetcher {
     }
 
 
+
+
+    //TODO: When writing out days, make sure to account for any missing days.
     public void writeBinaryData(File binDir, Connection conn) throws SQLException, ParseException, IOException {
-        //TODO this needs to determine if any intervals are missing.
+
         Map<String, List<OperationalDemandEntry>> intervalsByRegion = new HashMap<>();
         List<String> regionIds = new ArrayList<>();
 
@@ -355,34 +383,15 @@ public class Fetcher {
 
                             previousDate = currDate;
 
-//                        List<OperationalDemandEntry> entries = intervalsByRegion.get(entry.getRegionId());
-//                        if (entries == null) {
-//                            entries = new ArrayList<>();
-//                            intervalsByRegion.put(entry.getRegionId(), entries);
-//                        }
-//                        entries.add(entry);
                         }
+                        writeDayToOutputStream(binOutputStream, day);
+
                     }
                 }
             }
         }
 
 
-//        for (String regionId : intervalsByRegion.keySet()) {
-//            System.out.println("Region: " + regionId);
-//            List<OperationalDemandEntry> entries = intervalsByRegion.get(regionId);
-//            File binOutFile = new File(binDir, regionId + "-actual-operational-demand.bin");
-//
-//            ByteBuffer buf = ByteBuffer.allocate(entries.size() * 4);
-//            try (FileOutputStream out = new FileOutputStream(binOutFile);) {
-//                for (OperationalDemandEntry entry : entries) {
-//                    buf.putInt(entry.getDemand());
-//                }
-//
-//                out.write(buf.array());
-//            }
-//
-//        }
     }
 
     public void writeDayToOutputStream(OutputStream out, OperationalDemandEntry[] day) throws IOException {
@@ -393,5 +402,28 @@ public class Fetcher {
         }
 
         out.write(buf.array());
+    }
+
+
+    public List<LocalDate> loadCompletedDates(Connection connection) throws SQLException {
+        List<LocalDate> dates = new ArrayList<>();
+        try (Statement stmt =
+                     connection.createStatement()) {
+
+            stmt.execute("select date(interval_datetime) as interval_datetime from actual_operational_demand\n" +
+                    "WHERE region_id = 'QLD1'\n" +
+                    "group by date(interval_datetime)\n" +
+                    "having  count(*) = 48\n" +
+                    "order by date(interval_datetime) ");
+
+            try (ResultSet rs = stmt.getResultSet()) {
+                while (rs.next()) {
+                    DateTimeFormatter dtf = DateTimeFormatter.ISO_LOCAL_DATE;
+                    LocalDate date = LocalDate.parse(rs.getString("interval_datetime"), dtf);
+                    dates.add(date);
+                }
+            }
+        }
+        return dates;
     }
 }

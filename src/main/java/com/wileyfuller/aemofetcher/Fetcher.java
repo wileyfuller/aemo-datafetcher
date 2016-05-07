@@ -1,6 +1,7 @@
 package com.wileyfuller.aemofetcher;
 
 import com.wileyfuller.aemofetcher.model.OperationalDemandEntry;
+import jdk.nashorn.internal.parser.DateParser;
 import org.apache.commons.cli.*;
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVParser;
@@ -27,8 +28,10 @@ import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.Period;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.Date;
 import java.util.regex.Matcher;
@@ -156,7 +159,7 @@ public class Fetcher {
             final Document document = Jsoup.parse(responseBody);
 
             Elements elements = document.select("a");
-            
+
 
             Pattern p = Pattern.compile(".+PUBLIC_ACTUAL_OPERATIONAL_DEMAND_HH_(\\d+)_.+");
             DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyyMMddHHmm");
@@ -324,7 +327,7 @@ public class Fetcher {
 
 
 
-    //TODO: When writing out days, make sure to account for any missing days.
+
     public void writeBinaryData(File binDir, Connection conn) throws SQLException, ParseException, IOException {
 
         Map<String, List<OperationalDemandEntry>> intervalsByRegion = new HashMap<>();
@@ -374,6 +377,12 @@ public class Fetcher {
                             if (!previousDate.equals(currDate)) {
                                 writeDayToOutputStream(binOutputStream, day);
                                 day = new OperationalDemandEntry[48];
+
+                                // output 0's for any missing days
+                                int days = (int) ChronoUnit.DAYS.between(previousDate, currDate) - 1;
+                                for (int i = 0; i < days; i++) {
+                                    writeDayToOutputStream(binOutputStream, day);
+                                }
 
                             }
 
